@@ -1,6 +1,5 @@
 import json
 import ollama
-
 from tools import BrowserTools
 
 
@@ -9,133 +8,116 @@ browser = BrowserTools()
 goal = "Find remote AI agent jobs"
 
 memory = []
-
 completed_actions = set()
 
+blocked_by_cloudflare = False
 
-# -------------------------
-# LOGIN SESSION
-# -------------------------
-input(
-    "Logueate manualmente si hace falta y apretá ENTER..."
-)
+input("Logueate manualmente si hace falta y apretá ENTER...")
 
 browser.save_session()
 
 
-# -------------------------
-# CLEAN JSON
-# -------------------------
 def clean_json(text):
-
     text = text.strip()
 
     if "```" in text:
-
         parts = text.split("```")
-
         if len(parts) > 1:
+            text = parts[1].replace("json", "").strip()
 
-            text = parts[1]
-
-            text = text.replace(
-                "json",
-                ""
-            ).strip()
-
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except:
+        print("\nJSON ERROR:\n", text)
+        raise
 
 
-# -------------------------
-# PLANNER
-# -------------------------
-def planner(goal, memory):
+def planner(goal, memory, blocked):
 
     prompt = f"""
-You are an autonomous AI job hunter agent.
+You are an autonomous job hunter.
 
-Your job is to complete the goal
-step by step using browser tools.
+STRICT FLOW:
 
-Available actions:
+PHASE 1 (DEFAULT):
+search_jobs → get_job_titles → open_first_job → extract_page_text
 
-- search_jobs
-- get_job_titles
-- open_first_job
-- extract_page_text
+IF blocked OR bad results:
+PHASE 2:
+search_remoteok → get_remoteok_titles
 
-- search_remoteok
-- get_remoteok_titles
+PHASE 3 (ONLY IF NEEDED):
+search_upwork_jobs → get_upwork_titles → open_first_upwork_job → extract_page_text
 
-- done
-
-IMPORTANT:
-
-- Only return ONE action at a time.
-- Return ONLY valid JSON.
-- Do not explain anything.
-- Do not repeat useless actions.
+THEN:
+done
 
 RULES:
+- ONE action only
+- VALID JSON only
+- NO markdown
+- NO text
+- CONTINUE from memory
+- NEVER repeat actions
 
-- NEVER invent actions
-- ONLY use the available actions list
+blocked={blocked}
 
-1. Search jobs
-2. Get titles
-3. Open one job
-4. Extract page text
-
-If blocked by Cloudflare:
-
-- Try RemoteOK instead
-- Search RemoteOK jobs
-- Get RemoteOK titles
-- Then finish with done
-
-If jobs were already collected,
-do not repeat the same actions forever.
-
-Example:
-
-[
-  {{
-    "action": "search_jobs",
-    "query": "AI agents"
-  }}
-]
-
-Goal:
-{goal}
-
-Memory:
-{memory}
+memory:
+{json.dumps(memory, indent=2, ensure_ascii=False)}
 """
 
-    response = ollama.chat(
-
+    res = ollama.chat(
         model="qwen2.5:7b",
-
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+        messages=[{"role": "user", "content": prompt}]
     )
 
-    text = response["message"]["content"]
+    text = res["message"]["content"].strip()
 
-    print("\nRespuesta LLM:\n")
-    print(text)
+    print("\nLLM:\n", text)
+
+    if text.startswith("{"):
+        return [json.loads(text)]
 
     return clean_json(text)
 
 
-# -------------------------
-# MAIN LOOP
-# -------------------------
-max_steps = 10
+def analyze_job(text):
+
+    prompt = f"""
+Return ONLY JSON:
+
+{{
+"title": "",
+"company": "",
+"remote": true,
+"salary": "",
+"score": 1,
+"reason": ""
+}}
+
+TEXT:
+{text[:3000]}
+"""
+
+    res = ollama.chat(
+        model="qwen2.5:7b",
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    try:
+        return json.loads(res["message"]["content"])
+    except:
+        return {
+            "title": "",
+            "company": "",
+            "remote": True,
+            "salary": "",
+            "score": 1,
+            "reason": "parse error"
+        }
+
+
+max_steps = 15
 
 for i in range(max_steps):
 
@@ -143,195 +125,80 @@ for i in range(max_steps):
 
     try:
 
-        actions = planner(
-            goal,
-            memory
-        )
-
+        actions = planner(goal, memory, blocked_by_cloudflare)
         step = actions[0]
-
         action = step["action"]
 
-        # -------------------------
-        # AVOID INFINITE LOOPS
-        # -------------------------
         if action in completed_actions and action != "extract_page_text":
-
-            print(
-                f"\n⚠️ Acción repetida detectada: {action}"
-            )
-
-            print("Finalizando agente...")
-
+            print("⚠️ loop detected")
             break
 
-        completed_actions.add(action)
+        if action != "extract_page_text":
+            completed_actions.add(action)
 
-        print(f"\nEjecutando: {action}")
+        print("EXEC:", action)
 
-        # -------------------------
-        # SEARCH JOBS
-        # -------------------------
+        # ---------------- INDEED
         if action == "search_jobs":
+            r = browser.search_jobs(step.get("query", "AI jobs"))
+            memory.append({"action": action, "result": r})
 
-            result = browser.search_jobs(
-                step["query"]
-            )
-
-            print(result)
-
-            memory.append({
-                "step": i,
-                "action": action,
-                "result": result
-            })
-
-        # -------------------------
-        # GET JOB TITLES
-        # -------------------------
         elif action == "get_job_titles":
+            r = browser.get_job_titles()
+            print(r)
+            memory.append({"action": action, "result": r})
 
-            result = browser.get_job_titles()
-
-            for job in result:
-
-                print("-", job)
-
-            memory.append({
-                "step": i,
-                "action": action,
-                "result": result
-            })
-
-        # -------------------------
-        # OPEN FIRST JOB
-        # -------------------------
         elif action == "open_first_job":
+            r = browser.open_first_job()
+            memory.append({"action": action, "result": r})
 
-            result = browser.open_first_job()
-
-            print(result)
-
-            memory.append({
-                "step": i,
-                "action": action,
-                "result": result
-            })
-
-        # -------------------------
-        # EXTRACT TEXT
-        # -------------------------
+        # ---------------- EXTRACT
         elif action == "extract_page_text":
 
-            result = browser.extract_page_text()
+            text = browser.extract_page_text()
 
-            lower_text = result.lower()
-
-            blocked = (
-                "cloudflare" in lower_text
-                or "verify you are human" in lower_text
-                or "verification required" in lower_text
-                or "ray id" in lower_text
-            )
-
-            # -------------------------
-            # BLOCKED
-            # -------------------------
-            if blocked:
-
-                print("\n⚠️ Página bloqueada por anti-bot")
-
-                memory.append({
-                    "step": i,
-                    "action": action,
-                    "result": "BLOCKED_BY_CLOUDFLARE"
-                })
-
-            # -------------------------
-            # SUCCESS
-            # -------------------------
+            if any(x in text.lower() for x in ["cloudflare", "verify", "ray id"]):
+                blocked_by_cloudflare = True
+                memory.append({"action": action, "result": "BLOCKED"})
             else:
+                analysis = analyze_job(text)
+                memory.append({"action": action, "analysis": analysis})
 
-                print(result[:1000])
-
-                memory.append({
-                    "step": i,
-                    "action": action,
-                    "result": result[:1000]
-                })
-
-        # -------------------------
-        # SEARCH REMOTEOK
-        # -------------------------
+        # ---------------- REMOTEOK
         elif action == "search_remoteok":
+            r = browser.search_remoteok(step.get("query", "AI jobs"))
+            memory.append({"action": action, "result": r})
 
-            result = browser.search_remoteok(
-                step.get("query", "AI jobs")
-            )
-
-            print(result)
-
-            memory.append({
-                "step": i,
-                "action": action,
-                "result": result
-            })
-
-        # -------------------------
-        # GET REMOTEOK TITLES
-        # -------------------------
         elif action == "get_remoteok_titles":
+            r = browser.get_remoteok_titles()
+            print(r)
+            memory.append({"action": action, "result": r})
 
-            result = browser.get_remoteok_titles()
+        # ---------------- UPWORK
+        elif action == "search_upwork_jobs":
+            r = browser.search_upwork_jobs(step.get("query", "AI jobs"))
+            memory.append({"action": action, "result": r})
 
-            for job in result:
+        elif action == "get_upwork_titles":
+            r = browser.get_upwork_titles()
+            print(r)
+            memory.append({"action": action, "result": r})
 
-                print("-", job)
+        elif action == "open_first_upwork_job":
+            r = browser.open_first_upwork_job()
+            memory.append({"action": action, "result": r})
 
-            memory.append({
-                "step": i,
-                "action": action,
-                "result": result
-            })
-
-        # -------------------------
-        # DONE
-        # -------------------------
         elif action == "done":
-
-            print("\nObjetivo completado")
-
+            print("DONE")
             break
 
-        # -------------------------
-        # UNKNOWN ACTION
-        # -------------------------
-        else:
-
-            print(f"\n⚠️ Acción desconocida: {action}")
-
-            memory.append({
-                "step": i,
-                "error": f"UNKNOWN_ACTION: {action}"
-            })
-
     except Exception as e:
-
-        print("\nError:", e)
-
-        memory.append({
-            "step": i,
-            "error": str(e)
-        })
+        print("ERROR:", e)
+        memory.append({"error": str(e)})
 
 
-# -------------------------
-# FINAL MEMORY
-# -------------------------
-print("\nMEMORIA FINAL:\n")
+print("\nMEMORY:\n")
+print(json.dumps(memory, indent=2, ensure_ascii=False))
 
-print(memory)
-
-input("\nEnter para cerrar...")
-
+input("Enter...")
 browser.close()
