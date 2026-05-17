@@ -10,6 +10,18 @@ goal = "Find remote AI agent jobs"
 
 memory = []
 
+completed_actions = set()
+
+
+# -------------------------
+# LOGIN SESSION
+# -------------------------
+input(
+    "Logueate manualmente si hace falta y apretá ENTER..."
+)
+
+browser.save_session()
+
 
 # -------------------------
 # CLEAN JSON
@@ -51,6 +63,10 @@ Available actions:
 - get_job_titles
 - open_first_job
 - extract_page_text
+
+- search_remoteok
+- get_remoteok_titles
+
 - done
 
 IMPORTANT:
@@ -62,15 +78,23 @@ IMPORTANT:
 
 RULES:
 
-- First search jobs
-- Then get job titles
-- Then open a job
-- Then analyze the page text
+- NEVER invent actions
+- ONLY use the available actions list
+
+1. Search jobs
+2. Get titles
+3. Open one job
+4. Extract page text
+
+If blocked by Cloudflare:
+
+- Try RemoteOK instead
+- Search RemoteOK jobs
+- Get RemoteOK titles
 - Then finish with done
 
-If page text contains anti-bot systems
-like Cloudflare,
-you should finish with done.
+If jobs were already collected,
+do not repeat the same actions forever.
 
 Example:
 
@@ -111,7 +135,7 @@ Memory:
 # -------------------------
 # MAIN LOOP
 # -------------------------
-max_steps = 6
+max_steps = 10
 
 for i in range(max_steps):
 
@@ -127,6 +151,21 @@ for i in range(max_steps):
         step = actions[0]
 
         action = step["action"]
+
+        # -------------------------
+        # AVOID INFINITE LOOPS
+        # -------------------------
+        if action in completed_actions and action != "extract_page_text":
+
+            print(
+                f"\n⚠️ Acción repetida detectada: {action}"
+            )
+
+            print("Finalizando agente...")
+
+            break
+
+        completed_actions.add(action)
 
         print(f"\nEjecutando: {action}")
 
@@ -222,6 +261,40 @@ for i in range(max_steps):
                 })
 
         # -------------------------
+        # SEARCH REMOTEOK
+        # -------------------------
+        elif action == "search_remoteok":
+
+            result = browser.search_remoteok(
+                step.get("query", "AI jobs")
+            )
+
+            print(result)
+
+            memory.append({
+                "step": i,
+                "action": action,
+                "result": result
+            })
+
+        # -------------------------
+        # GET REMOTEOK TITLES
+        # -------------------------
+        elif action == "get_remoteok_titles":
+
+            result = browser.get_remoteok_titles()
+
+            for job in result:
+
+                print("-", job)
+
+            memory.append({
+                "step": i,
+                "action": action,
+                "result": result
+            })
+
+        # -------------------------
         # DONE
         # -------------------------
         elif action == "done":
@@ -229,6 +302,18 @@ for i in range(max_steps):
             print("\nObjetivo completado")
 
             break
+
+        # -------------------------
+        # UNKNOWN ACTION
+        # -------------------------
+        else:
+
+            print(f"\n⚠️ Acción desconocida: {action}")
+
+            memory.append({
+                "step": i,
+                "error": f"UNKNOWN_ACTION: {action}"
+            })
 
     except Exception as e:
 
