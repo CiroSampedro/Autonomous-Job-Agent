@@ -26,11 +26,13 @@ class BrowserTools:
         return f"Navegado a {url}"
 
     # -------------------------
-    # SEARCH INDEED JOBS
+    # SEARCH JOBS
     # -------------------------
     def search_jobs(self, query):
 
-        search_url = f"https://www.indeed.com/jobs?q={query}&l=Remote"
+        search_url = (
+            f"https://www.indeed.com/jobs?q={query}&l=Remote"
+        )
 
         self.page.goto(
             search_url,
@@ -59,6 +61,25 @@ class BrowserTools:
             )
 
         return jobs
+
+    # -------------------------
+    # OPEN FIRST JOB
+    # -------------------------
+    def open_first_job(self):
+
+        self.page.wait_for_selector("h2 a")
+
+        first_job = self.page.locator(
+            "h2 a"
+        ).first
+
+        first_job.click()
+
+        self.page.wait_for_load_state(
+            "domcontentloaded"
+        )
+
+        return "Primer trabajo abierto"
 
     # -------------------------
     # EXTRACT PAGE TEXT

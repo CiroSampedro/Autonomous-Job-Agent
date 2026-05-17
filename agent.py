@@ -49,6 +49,7 @@ Available actions:
 
 - search_jobs
 - get_job_titles
+- open_first_job
 - extract_page_text
 - done
 
@@ -58,8 +59,18 @@ IMPORTANT:
 - Return ONLY valid JSON.
 - Do not explain anything.
 - Do not repeat useless actions.
-- If jobs were already found,
-you can finish with "done".
+
+RULES:
+
+- First search jobs
+- Then get job titles
+- Then open a job
+- Then analyze the page text
+- Then finish with done
+
+If page text contains anti-bot systems
+like Cloudflare,
+you should finish with done.
 
 Example:
 
@@ -154,19 +165,61 @@ for i in range(max_steps):
             })
 
         # -------------------------
+        # OPEN FIRST JOB
+        # -------------------------
+        elif action == "open_first_job":
+
+            result = browser.open_first_job()
+
+            print(result)
+
+            memory.append({
+                "step": i,
+                "action": action,
+                "result": result
+            })
+
+        # -------------------------
         # EXTRACT TEXT
         # -------------------------
         elif action == "extract_page_text":
 
             result = browser.extract_page_text()
 
-            print(result[:1000])
+            lower_text = result.lower()
 
-            memory.append({
-                "step": i,
-                "action": action,
-                "result": result[:1000]
-            })
+            blocked = (
+                "cloudflare" in lower_text
+                or "verify you are human" in lower_text
+                or "verification required" in lower_text
+                or "ray id" in lower_text
+            )
+
+            # -------------------------
+            # BLOCKED
+            # -------------------------
+            if blocked:
+
+                print("\n⚠️ Página bloqueada por anti-bot")
+
+                memory.append({
+                    "step": i,
+                    "action": action,
+                    "result": "BLOCKED_BY_CLOUDFLARE"
+                })
+
+            # -------------------------
+            # SUCCESS
+            # -------------------------
+            else:
+
+                print(result[:1000])
+
+                memory.append({
+                    "step": i,
+                    "action": action,
+                    "result": result[:1000]
+                })
 
         # -------------------------
         # DONE
